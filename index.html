@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Game Xếp Khối Gỗ - Kéo Thả</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(5, 50px);
+      grid-template-rows: repeat(5, 50px);
+      gap: 5px;
+      margin: 20px auto;
+      width: max-content;
+    }
+    .cell {
+      width: 50px;
+      height: 50px;
+      background-color: #eee;
+      border: 1px solid #ccc;
+      position: relative;
+    }
+    .cell.preview { background-color: lightgreen !important; }
+    .blocks-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      justify-content: center;
+      margin-top: 30px;
+    }
+    .block {
+      display: grid;
+      gap: 3px;
+      cursor: grab;
+    }
+    .block-1 { grid-template-columns: repeat(1, 50px); grid-template-rows: repeat(1, 50px); }
+    .block-2-horizontal { grid-template-columns: repeat(2, 50px); grid-template-rows: 50px; }
+    .block-2-vertical { grid-template-columns: 50px; grid-template-rows: repeat(2, 50px); }
+    .block-2-diagonal { grid-template-columns: repeat(2, 50px); grid-template-rows: repeat(2, 50px); }
+    .block-3-horizontal { grid-template-columns: repeat(3, 50px); grid-template-rows: 50px; }
+    .block-3-vertical { grid-template-columns: 50px; grid-template-rows: repeat(3, 50px); }
+    .block-3-diagonal { grid-template-columns: repeat(3, 50px); grid-template-rows: repeat(3, 50px); }
+    .square {
+      width: 50px;
+      height: 50px;
+      background-image: url('thayluang.jpg');
+      background-size: cover;
+      background-position: center;
+    }
+    .grid .cell.occupied { background-color: #eee; }
+    #timer { font-size: 20px; margin: 10px; }
+    #surrender {
+      margin-top: 10px;
+      padding: 10px 20px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>🪵 Game Xếp Khối Gỗ (Kéo Thả)</h2>
+  <h3>Điểm: <span id="score">0</span></h3>
+  <div id="timer">Thời gian: 03:00</div>
+  
+  <button id="surrender">Bỏ cuộc</button>
+
+  <div class="grid" id="gameGrid"></div>
+  <div class="blocks-container" id="blocksContainer"></div>
+
+  <!-- Âm thanh -->
+  <audio id="placeSound" src="movie_1.mp3" preload="auto"></audio>
+  <audio id="scoreSound" src="movie_1.mp3" preload="auto"></audio>
+  <audio id="endGameSound" src="thayluan.m4a" preload="auto"></audio>
+  
+  </script>
+
+  <script>
+    const grid = document.getElementById("gameGrid");
+    const blocksContainer = document.getElementById("blocksContainer");
+    const timerDisplay = document.getElementById("timer");
+    const surrenderBtn = document.getElementById("surrender");
+
+    let draggedShape = [];
+    let score = 0;
+    let blocksPlaced = 0;
+    let gameEnded = false;
+    let timeLeft = 180;
+    let timer;
+
+    const blockShapes = [
+      { class: "block-1", shape: [0] },
+      { class: "block-2-vertical", shape: [0,5] },
+      { class: "block-2-horizontal", shape: [0,1] },
+      { class: "block-2-diagonal", shape: [0,6] },
+      { class: "block-3-vertical", shape: [0,5,10] },
+      { class: "block-3-horizontal", shape: [0,1,2] },
+      { class: "block-3-diagonal", shape: [0,6,12] },
+    ];
+
+    function generateGrid() {
+      for (let i = 0; i < 25; i++) {
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        cell.dataset.index = i;
+        grid.appendChild(cell);
+      }
+    }
+
+    function createBlockElement(blockData) {
+      const block = document.createElement("div");
+      block.className = `block ${blockData.class}`;
+      block.draggable = true;
+      block.dataset.shape = JSON.stringify(blockData.shape);
+
+      blockData.shape.forEach((offset, i) => {
+        const sq = document.createElement("div");
+        sq.className = "square";
+        if (blockData.class.includes("diagonal")) {
+          sq.style.gridColumn = i + 1;
+          sq.style.gridRow = i + 1;
+        }
+        block.appendChild(sq);
+      });
+
+      block.addEventListener("dragstart", () => {
+        draggedShape = blockData.shape;
+      });
+
+      return block;
+    }
+
+    function generateRandomBlocks() {
+      blocksContainer.innerHTML = "";
+      const selected = [];
+      while (selected.length < 3) {
+        const rand = blockShapes[Math.floor(Math.random() * blockShapes.length)];
+        selected.push(rand);
+      }
+      selected.forEach(b => {
+        const blockEl = createBlockElement(b);
+        blocksContainer.appendChild(blockEl);
+      });
+    }
+
+    function clearPreview() {
+      document.querySelectorAll(".cell.preview").forEach(cell => cell.classList.remove("preview"));
+    }
+
+    function setupCellEvents() {
+      document.querySelectorAll(".cell").forEach((cell, index) => {
+        cell.addEventListener("dragover", e => {
+          if (gameEnded) return;
+          e.preventDefault();
+          clearPreview();
+          draggedShape.forEach(offset => {
+            let previewIndex = index + offset;
+            let previewCell = grid.querySelector(`[data-index='${previewIndex}']`);
+            if (previewCell && !previewCell.classList.contains("occupied")) {
+              previewCell.classList.add("preview");
+            }
+          });
+        });
+
+        cell.addEventListener("dragleave", () => {
+          clearPreview();
+        });
+
+        cell.addEventListener("drop", () => {
+          if (gameEnded) return;
+          clearPreview();
+          const canPlace = draggedShape.every(offset => {
+            let targetIndex = index + offset;
+            let targetCell = grid.querySelector(`[data-index='${targetIndex}']`);
+            return targetCell && !targetCell.classList.contains("occupied");
+          });
+
+          if (canPlace) {
+            draggedShape.forEach(offset => {
+              let targetIndex = index + offset;
+              let targetCell = grid.querySelector(`[data-index='${targetIndex}']`);
+              if (targetCell) {
+                targetCell.classList.add("occupied");
+                const square = document.createElement("div");
+                square.className = "square";
+                targetCell.appendChild(square);
+              }
+            });
+
+            document.getElementById("placeSound").play();
+            blocksPlaced++;
+            checkFullLines();
+
+            if (blocksPlaced >= 3) {
+              blocksPlaced = 0;
+              generateRandomBlocks();
+            } else {
+              const currentBlock = document.querySelector(`.block[data-shape='${JSON.stringify(draggedShape)}']`);
+              if (currentBlock) currentBlock.remove();
+            }
+          } else {
+            alert("Ô đích đã bị chặn! Hãy chọn vị trí khác.");
+          }
+        });
+      });
+    }
+
+    function checkFullLines() {
+      let fullRows = [];
+      let fullCols = [];
+
+      for (let row = 0; row < 5; row++) {
+        let rowFull = true;
+        for (let col = 0; col < 5; col++) {
+          let index = row * 5 + col;
+          let cell = grid.querySelector(`[data-index='${index}']`);
+          if (!cell.classList.contains("occupied")) {
+            rowFull = false;
+            break;
+          }
+        }
+        if (rowFull) fullRows.push(row);
+      }
+
+      for (let col = 0; col < 5; col++) {
+        let colFull = true;
+        for (let row = 0; row < 5; row++) {
+          let index = row * 5 + col;
+          let cell = grid.querySelector(`[data-index='${index}']`);
+          if (!cell.classList.contains("occupied")) {
+            colFull = false;
+            break;
+          }
+        }
+        if (colFull) fullCols.push(col);
+      }
+
+      let points = (fullRows.length + fullCols.length) * 5;
+      if (points > 0) {
+        score += points;
+        document.getElementById("score").textContent = score;
+        document.getElementById("scoreSound").play();
+      }
+
+      fullRows.forEach(row => {
+        for (let col = 0; col < 5; col++) {
+          let index = row * 5 + col;
+          let cell = grid.querySelector(`[data-index='${index}']`);
+          cell.classList.remove("occupied");
+          cell.innerHTML = "";
+        }
+      });
+
+      fullCols.forEach(col => {
+        for (let row = 0; row < 5; row++) {
+          let index = row * 5 + col;
+          let cell = grid.querySelector(`[data-index='${index}']`);
+          cell.classList.remove("occupied");
+          cell.innerHTML = "";
+        }
+      });
+    }
+
+    function endGame() {
+  gameEnded = true;
+  document.getElementById("endGameSound").play();
+  const endAnim = document.getElementById("endAnimation");
+  const finalImage = document.querySelector("#endAnimation img:last-child");
+  endAnim.style.display = "flex";
+
+  setTimeout(() => {
+    finalImage.style.display = "block";
+  }, 800);
+
+  setTimeout(() => {
+    endAnim.style.display = "none";
+    finalImage.style.display = "none";
+    alert(`Hết giờ! Tổng điểm của bạn là: ${score}`);
+    resetGame();
+  }, 3000);
+}
+
+    function resetGame() {
+      score = 0;
+      blocksPlaced = 0;
+      gameEnded = false;
+      timeLeft = 180;
+      document.getElementById("score").textContent = "0";
+      grid.innerHTML = "";
+      generateGrid();
+      setupCellEvents();
+      blocksContainer.innerHTML = "";
+      generateRandomBlocks();
+      clearInterval(timer);
+      startTimer();
+    }
+
+    function startTimer() {
+      timer = setInterval(() => {
+        if (gameEnded) return clearInterval(timer);
+        timeLeft--;
+        const min = String(Math.floor(timeLeft / 60)).padStart(2, '0');
+        const sec = String(timeLeft % 60).padStart(2, '0');
+        timerDisplay.textContent = `Thời gian: ${min}:${sec}`;
+        if (timeLeft <= 0) {
+          clearInterval(timer);
+          endGame();
+        }
+      }, 1000);
+    }
+
+    surrenderBtn.onclick = () => {
+      if (!gameEnded) {
+        clearInterval(timer);
+        endGame();
+      }
+    };
+
+    generateGrid();
+    setupCellEvents();
+    generateRandomBlocks();
+    startTimer();
+  </script>
+  
+  
+  <div id="endAnimation" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background-color:black;z-index:9999;justify-content:center;align-items:center;flex-direction:column;">
+    <img id="explosionGif" src="0e14e85756dbdfe2979998bf8e76e3c4.gif" style="width:200px;height:200px;" />
+    <img id="finalImage" src="thayluang.jpg" style="width:200px;height:200px;display:none;margin-top:20px;border-radius:10px;" />
+  </div>
+</body>
+</html>
